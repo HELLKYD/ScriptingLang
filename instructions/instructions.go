@@ -27,6 +27,8 @@ const (
 	ICONST_5  = 0x08
 
 	IRETURN = 0xac
+
+	INVOKEVIRTUAL = 0xb6
 )
 
 var Iconsts map[int32]byte = map[int32]byte{

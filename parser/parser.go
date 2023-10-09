@@ -1,18 +1,27 @@
 package parser
 
 import (
+	"compiler/classfile"
 	"compiler/tokenizer"
 	"log"
 )
 
 type Parser struct {
-	Source    []tokenizer.Token
-	reader    tokenizer.TokenReader
-	variables map[string]string
+	Source []tokenizer.Token
+	reader tokenizer.TokenReader
+	class  *classfile.Class
 }
 
-func NewParser(src []tokenizer.Token) Parser {
-	return Parser{Source: src, reader: tokenizer.NewTokenReader(src), variables: make(map[string]string)}
+var discoveredFunctions map[string]Function = make(map[string]Function)
+
+func NewParser(src []tokenizer.Token, class *classfile.Class) Parser {
+	discoveredFunctions["println"] = Function{
+		ReturnType: "void",
+		Args: []FunctionArgument{
+			{Name: "value", Type: "int"},
+		},
+	}
+	return Parser{Source: src, reader: tokenizer.NewTokenReader(src), class: class}
 }
 
 func (p *Parser) parseExpression() Expression {
@@ -47,67 +56,11 @@ func (p *Parser) parseStatement() Statement {
 	isUnexpectedEndOfInput(err)
 	p.reader.NextToken()
 	if cur.Type == tokenizer.RETURN {
-		expr := p.parseExpression()
-		if expr == nil {
-			log.Fatalf("error: could not parse expression")
-		}
-		tok, _ := p.reader.ReadToken()
-		isSemicolon(tok)
-		p.reader.NextToken()
-		stmt := ReturnStatement{ReturnValue: expr}
-		return stmt
+		return parseReturnStatement(p)
 	} else if cur.Type == tokenizer.VARDECL {
-		ident := p.parseExpression()
-		if ident == nil || ident.GetExpressionType() != "identifier" {
-			log.Fatalf("error: expected identifier")
-		}
-		typeOfVar := p.parseExpression()
-		if typeOfVar == nil || ident.GetExpressionType() != "identifier" {
-			log.Fatalf("error: expected type")
-		}
-		next, err := p.reader.ReadToken()
-		isUnexpectedEndOfInput(err)
-		if next.Type != tokenizer.ASSIGN {
-			log.Fatalf("error: expected '='")
-		}
-		p.reader.NextToken()
-		varValue := p.parseExpression()
-		next, err = p.reader.ReadToken()
-		isUnexpectedEndOfInput(err)
-		isSemicolon(next)
-		p.reader.NextToken()
-		varDecl := VarDecl{Ident: ident.(Identifier), Value: varValue, Type: typeOfVar.(Identifier)}
-		p.variables[ident.(Identifier).Value.Value] = typeOfVar.(Identifier).Value.Value
-		return varDecl
+		return parseVarDecl(p)
 	} else if cur.Type == tokenizer.FUN_DEF {
-		ident := p.parseExpression()
-		if ident.GetExpressionType() != "identifier" {
-			log.Fatalf("error: expected identifier")
-		}
-		next, err := p.reader.ReadToken()
-		isUnexpectedEndOfInput(err)
-		if next.Type != tokenizer.OPEN_PAR {
-			log.Fatalf("error: expected open parentheses")
-		}
-		p.reader.NextToken()
-		args := make([]FunctionArgument, 0)
-		p.parseFuncArgs(&args)
-		retType := ""
-		next, err = p.reader.ReadToken()
-		isUnexpectedEndOfInput(err)
-		getFuncReturnType(&retType, next, p)
-		next, err = p.reader.ReadToken()
-		isUnexpectedEndOfInput(err)
-		p.reader.NextToken()
-		if next.Type != tokenizer.CURL_OPEN_PAR {
-			log.Fatalf("error: expected '{'")
-		}
-		stmts := make([]Statement, 0)
-		p.parseScope(&stmts)
-		funcDef := FunctionDefinition{Name: ident.(Identifier).Value.Value, Args: args,
-			Scope: Scope{Statements: stmts}, ReturnType: retType}
-		log.Println(funcDef.Name, funcDef.ReturnType, funcDef.Args)
-		return funcDef
+		return parseFunDef(p)
 	} else if cur.Type == tokenizer.IDENTIFIER {
 		next, err := p.reader.ReadToken()
 		if err != nil {
@@ -115,37 +68,153 @@ func (p *Parser) parseStatement() Statement {
 		}
 		p.reader.NextToken()
 		if next.Type == tokenizer.ASSIGN {
-			varIdent := cur
-			newValue := p.parseExpression()
-			next, err = p.reader.ReadToken()
-			isUnexpectedEndOfInput(err)
-			isSemicolon(next)
-			p.reader.NextToken()
-			varReassign := VarReAssignment{Ident: Identifier{Value: varIdent}, Value: newValue}
-			return varReassign
+			return parseVarReassignment(p, cur)
 		} else if next.Type == tokenizer.PLUS {
-			next, err = p.reader.ReadToken()
-			isUnexpectedEndOfInput(err)
-			if next.Type != tokenizer.ASSIGN {
-				log.Fatalf("error: expected '='")
-			}
-			p.reader.NextToken()
-			varIdent := cur
-			newValue := p.parseExpression()
-			next, err := p.reader.ReadToken()
-			isUnexpectedEndOfInput(err)
-			isSemicolon(next)
-			p.reader.NextToken()
-			return VarAddToValue{Ident: Identifier{Value: varIdent}, ValueToAdd: newValue}
+			return parseVarAddToValue(p, cur)
+		} else if next.Type == tokenizer.OPEN_PAR {
+			return parseFunctionCall(p, cur)
 		}
 	}
 	return nil
+}
+
+func parseReturnStatement(p *Parser) ReturnStatement {
+	expr := p.parseExpression()
+	if expr == nil {
+		log.Fatalf("error: could not parse expression")
+	}
+	tok, _ := p.reader.ReadToken()
+	isSemicolon(tok)
+	p.reader.NextToken()
+	stmt := ReturnStatement{ReturnValue: expr}
+	return stmt
+}
+
+func parseVarDecl(p *Parser) VarDecl {
+	ident := p.parseExpression()
+	if ident == nil || ident.GetExpressionType() != IDENTIFIER_EXP {
+		log.Fatalf("error: expected identifier")
+	}
+	typeOfVar := p.parseExpression()
+	if typeOfVar == nil || ident.GetExpressionType() != IDENTIFIER_EXP {
+		log.Fatalf("error: expected type")
+	}
+	next, err := p.reader.ReadToken()
+	isUnexpectedEndOfInput(err)
+	if next.Type != tokenizer.ASSIGN {
+		log.Fatalf("error: expected '='")
+	}
+	p.reader.NextToken()
+	varValue := p.parseExpression()
+	next, err = p.reader.ReadToken()
+	isUnexpectedEndOfInput(err)
+	isSemicolon(next)
+	p.reader.NextToken()
+	varDecl := VarDecl{Ident: ident.(Identifier), Value: varValue, Type: typeOfVar.(Identifier)}
+	return varDecl
+}
+
+func parseFunDef(p *Parser) FunctionDefinition {
+	ident := p.parseExpression()
+	if ident.GetExpressionType() != IDENTIFIER_EXP {
+		log.Fatalf("error: expected identifier")
+	}
+	next, err := p.reader.ReadToken()
+	isUnexpectedEndOfInput(err)
+	if next.Type != tokenizer.OPEN_PAR {
+		log.Fatalf("error: expected open parentheses")
+	}
+	p.reader.NextToken()
+	args := make([]FunctionArgument, 0)
+	p.parseFuncArgs(&args)
+	retType := ""
+	next, err = p.reader.ReadToken()
+	isUnexpectedEndOfInput(err)
+	getFuncReturnType(&retType, next, p)
+	next, err = p.reader.ReadToken()
+	isUnexpectedEndOfInput(err)
+	p.reader.NextToken()
+	if next.Type != tokenizer.CURL_OPEN_PAR {
+		log.Fatalf("error: expected '{'")
+	}
+	stmts := make([]Statement, 0)
+	p.parseScope(&stmts)
+	funcDef := FunctionDefinition{Name: ident.(Identifier).Value.Value, Args: args,
+		Scope: Scope{Statements: stmts}, ReturnType: retType}
+	log.Println(funcDef.Name, funcDef.ReturnType, funcDef.Args)
+	addDiscoveredFunction(ident.(Identifier).Value.Value, retType, args)
+	return funcDef
+}
+
+func parseVarReassignment(p *Parser, cur tokenizer.Token) VarReAssignment {
+	varIdent := cur
+	newValue := p.parseExpression()
+	next, err := p.reader.ReadToken()
+	isUnexpectedEndOfInput(err)
+	isSemicolon(next)
+	p.reader.NextToken()
+	varReassign := VarReAssignment{Ident: Identifier{Value: varIdent}, Value: newValue}
+	return varReassign
+}
+
+func parseVarAddToValue(p *Parser, cur tokenizer.Token) VarAddToValue {
+	next, err := p.reader.ReadToken()
+	isUnexpectedEndOfInput(err)
+	if next.Type != tokenizer.ASSIGN {
+		log.Fatalf("error: expected '='")
+	}
+	p.reader.NextToken()
+	varIdent := cur
+	newValue := p.parseExpression()
+	next, err = p.reader.ReadToken()
+	isUnexpectedEndOfInput(err)
+	isSemicolon(next)
+	p.reader.NextToken()
+	return VarAddToValue{Ident: Identifier{Value: varIdent}, ValueToAdd: newValue}
+}
+
+func parseFunctionCall(p *Parser, cur tokenizer.Token) FunctionCall {
+	args := make([]Expression, 0)
+	next, err := p.reader.ReadToken()
+	isUnexpectedEndOfInput(err)
+	if next.Type != tokenizer.CLOSE_PAR {
+		parseFuncCallArgs(p, &args)
+	}
+	p.reader.NextToken()
+	next, err = p.reader.ReadToken()
+	isUnexpectedEndOfInput(err)
+	isSemicolon(next)
+	p.reader.NextToken()
+	funcCall := FunctionCall{CalledFunctionName: cur.Value, Arguments: args}
+	return funcCall
+}
+
+func parseFuncCallArgs(p *Parser, args *[]Expression) {
+	for {
+		exp := p.parseExpression()
+		*args = append(*args, exp)
+		cur, err := p.reader.ReadToken()
+		isUnexpectedEndOfInput(err)
+		if cur.Type == tokenizer.CLOSE_PAR {
+			break
+		} else if cur.Type == tokenizer.COLON {
+			p.reader.NextToken()
+			continue
+		}
+	}
 }
 
 func isUnexpectedEndOfInput(err error) {
 	if err != nil {
 		log.Fatalf("error: unexpected end of input")
 	}
+}
+
+func addDiscoveredFunction(name, retType string, args []FunctionArgument) {
+	if _, ok := discoveredFunctions[name]; ok {
+		log.Fatalf("error: cannot define a function with the name %v (function with that name already exists)", name)
+	}
+	discoveredFunctions[name] = Function{ReturnType: retType, Args: args}
 }
 
 func getFuncReturnType(retType *string, t tokenizer.Token, p *Parser) {
@@ -173,7 +242,7 @@ func (p *Parser) parseFuncArgs(args *[]FunctionArgument) {
 			if temp.Type != tokenizer.IDENTIFIER {
 				log.Fatalf("error: expected identifier")
 			}
-			*args = append(*args, FunctionArgument{Name: Identifier{Value: next}, Type: temp.Value})
+			*args = append(*args, FunctionArgument{Name: next.Value, Type: temp.Value})
 			continue
 		} else if next.Type == tokenizer.COLON {
 			continue
@@ -190,7 +259,7 @@ func (p *Parser) parseScope(stmts *[]Statement) {
 			break
 		}
 		stmt := p.parseStatement()
-		if stmt.GetStatementType() == "funcDef" {
+		if stmt.GetStatementType() == FUNCDEF {
 			log.Fatalf("error: cannot define function inside another function")
 		}
 		*stmts = append(*stmts, stmt)

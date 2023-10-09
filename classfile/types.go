@@ -2,6 +2,7 @@ package classfile
 
 import (
 	"encoding/binary"
+	"log"
 )
 
 type Const struct {
@@ -57,6 +58,18 @@ func NewClass(name string, super string) *Class {
 		attributes: make([]Attribute, 0),
 	}
 	return &class
+}
+
+func (c *Class) AddMethodRef(name, descriptor, class string) uint16 {
+	name_index := c.constPool.AddConst(Const{Tag: 0x01, String: class})
+	class_index := c.constPool.AddConst(Const{Tag: 0x07, NameIndex: name_index})
+
+	name_index = c.constPool.AddConst(Const{Tag: 0x01, String: name})
+	desc_index := c.constPool.AddConst(Const{Tag: 0x01, String: descriptor})
+	name_and_type := c.constPool.AddConst(Const{Tag: 0x0c, NameIndex: name_index, DescIndex: desc_index})
+
+	methodRefIndex := c.constPool.AddConst(Const{Tag: 0x0a, ClassIndex: class_index, NameAndTypeIndex: name_and_type})
+	return methodRefIndex
 }
 
 func (c *Class) AddMethod(name string, descriptor string, byteCode []byte, maxLocalVariables uint16) {
@@ -129,6 +142,14 @@ func (c *Class) convertConstPoolToBytes() []byte {
 			constAsBytes = append(constAsBytes, valueInBytes...)
 		case 0x07:
 			constAsBytes = binary.BigEndian.AppendUint16(constAsBytes, co.NameIndex)
+		case 0x0c:
+			constAsBytes = binary.BigEndian.AppendUint16(constAsBytes, co.NameIndex)
+			constAsBytes = binary.BigEndian.AppendUint16(constAsBytes, co.DescIndex)
+		case 0x0a:
+			constAsBytes = binary.BigEndian.AppendUint16(constAsBytes, co.ClassIndex)
+			constAsBytes = binary.BigEndian.AppendUint16(constAsBytes, co.NameAndTypeIndex)
+		default:
+			log.Fatalf("error: unsupported const pool tag")
 		}
 		constPoolAsBytes = append(constPoolAsBytes, constAsBytes...)
 	}

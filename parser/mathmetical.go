@@ -59,7 +59,7 @@ type MathExpNode struct {
 }
 
 func (mxp MathExpNode) GetExpressionType() string {
-	return "mathExp"
+	return MATH_EXP
 }
 
 func (mxp MathExpNode) GenerateByteCode(variables map[string]Variable) []byte {
