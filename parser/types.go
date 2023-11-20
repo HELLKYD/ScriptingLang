@@ -5,6 +5,7 @@ import (
 	"compiler/instructions"
 	"compiler/tokenizer"
 	"encoding/binary"
+	"fmt"
 	"log"
 )
 
@@ -55,7 +56,7 @@ func (r ReturnStatement) GenerateByteCode(context *GeneratorContext) []byte {
 	byteCode := make([]byte, 0)
 	switch r.ReturnValue.GetExpressionType() {
 	case MATH_EXP:
-		byteCode = append(byteCode, r.ReturnValue.(MathExpNode).GenerateByteCode(context.Variables)...)
+		byteCode = append(byteCode, r.ReturnValue.(MathExpNode).GenerateByteCode(context)...)
 		byteCode = append(byteCode, instructions.IRETURN)
 	case IDENTIFIER_EXP:
 		variable, ok := context.Variables[r.ReturnValue.(Identifier).Value.Value]
@@ -94,7 +95,7 @@ func (id VarDecl) GenerateByteCode(context *GeneratorContext) []byte {
 			}
 			byteCode = append(byteCode, loadVariable(variable)...)
 		} else if id.Value.GetExpressionType() == MATH_EXP {
-			byteCode = append(byteCode, id.Value.(MathExpNode).GenerateByteCode(context.Variables)...)
+			byteCode = append(byteCode, id.Value.(MathExpNode).GenerateByteCode(context)...)
 		}
 		byteCode = append(byteCode, declareVariable(id.Ident.Value.Value, "int", context)...)
 		return byteCode
@@ -120,7 +121,7 @@ func (vra VarReAssignment) GenerateByteCode(context *GeneratorContext) []byte {
 	}
 	if variable.Type == "int" {
 		if vra.Value.GetExpressionType() == MATH_EXP {
-			byteCode = append(byteCode, vra.Value.(MathExpNode).GenerateByteCode(context.Variables)...)
+			byteCode = append(byteCode, vra.Value.(MathExpNode).GenerateByteCode(context)...)
 		} else if vra.Value.GetExpressionType() == IDENTIFIER_EXP {
 			tempVar, ok := context.Variables[vra.Value.(Identifier).Value.Value]
 			if !ok {
@@ -153,7 +154,7 @@ func (vatv VarAddToValue) GenerateByteCode(context *GeneratorContext) []byte {
 	}
 	if variable.Type == "int" {
 		if vatv.ValueToAdd.GetExpressionType() == MATH_EXP {
-			byteCode = append(byteCode, vatv.ValueToAdd.(MathExpNode).GenerateByteCode(context.Variables)...)
+			byteCode = append(byteCode, vatv.ValueToAdd.(MathExpNode).GenerateByteCode(context)...)
 		} else if vatv.ValueToAdd.GetExpressionType() == IDENTIFIER_EXP {
 			tempVar, ok := context.Variables[vatv.ValueToAdd.(Identifier).Value.Value]
 			if !ok {
@@ -196,7 +197,7 @@ func loadVariable(variable Variable) []byte {
 }
 
 // um imm scope deklarierte variablen zu löschen
-// den unterschied der in var map befindlichen eintrge feststellen
+// den unterschied der in var map befindlichen einträge feststellen
 // alles was davor noch nicht da war löschen
 type Scope struct {
 	Statements []Statement
@@ -234,7 +235,6 @@ func (fd FunctionDefinition) GenerateByteCode(context *GeneratorContext) []byte 
 		variables[k] = k
 	}
 	for _, arg := range fd.Args {
-		//byteCode = append(byteCode, declareVariable(arg.Name.Value.Value, arg.Type, context)...)
 		context.Variables[arg.Name] = Variable{VariableIndex: *context.MaxLocals, Type: arg.Type}
 		*context.MaxLocals++
 	}
@@ -246,9 +246,13 @@ func (fd FunctionDefinition) GenerateByteCode(context *GeneratorContext) []byte 
 			delete(context.Variables, k)
 		}
 	}
-	context.Class.AddMethod(fd.Name, fd.ReturnType, byteCode, uint16(*context.MaxLocals))
+	context.Class.AddMethod(fd.Name, generateFunctionDescriptor(len(fd.Args), fd.ReturnType), byteCode, uint16(*context.MaxLocals))
 	*context.MaxLocals = 0
 	return byteCode
+}
+
+func generateFunctionDescriptor(argCount int, retType string) string {
+	return fmt.Sprintf("(%v)%v", argCount, retType)
 }
 
 func declareVariable(name, typ string, context *GeneratorContext) []byte {
@@ -272,6 +276,10 @@ type FunctionCall struct {
 	Arguments          []Expression
 }
 
+func (fc FunctionCall) GetExpressionType() string {
+	return FUNCTIONCALL
+}
+
 func (fc FunctionCall) GetStatementType() string {
 	return FUNCTIONCALL
 }
@@ -290,7 +298,7 @@ func (fc FunctionCall) GenerateByteCode(context *GeneratorContext) []byte {
 			if fun.Args[index].Type != "int" {
 				log.Fatalf("error: expected argument of type %v", fun.Args[index].Type)
 			}
-			byteCode = append(byteCode, arg.(MathExpNode).GenerateByteCode(context.Variables)...)
+			byteCode = append(byteCode, arg.(MathExpNode).GenerateByteCode(context)...)
 		} else if arg.GetExpressionType() == IDENTIFIER_EXP {
 			v, ok := context.Variables[arg.(Identifier).Value.Value]
 			if !ok {
@@ -300,10 +308,13 @@ func (fc FunctionCall) GenerateByteCode(context *GeneratorContext) []byte {
 				log.Fatalf("error: expected argument of type %v", fun.Args[index].Type)
 			}
 			byteCode = append(byteCode, loadVariable(v)...)
+		} else if arg.GetExpressionType() == FUNCTIONCALL {
+			fc := arg.(FunctionCall)
+			byteCode = append(byteCode, fc.GenerateByteCode(context)...)
 		}
 	}
 	byteCode = append(byteCode, instructions.INVOKEVIRTUAL)
-	methodRefIndex := context.Class.AddMethodRef(fc.CalledFunctionName, fun.ReturnType, "Default")
+	methodRefIndex := context.Class.AddMethodRef(fc.CalledFunctionName, generateFunctionDescriptor(len(fun.Args), fun.ReturnType), "Default")
 	byteCode = binary.BigEndian.AppendUint16(byteCode, methodRefIndex)
 	return byteCode
 }

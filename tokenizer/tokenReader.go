@@ -47,3 +47,17 @@ func (tr *TokenReader) UnreadToken() error {
 	tr.index--
 	return nil
 }
+
+func (tr *TokenReader) UnreadTokens(tokens int) error {
+	if tr.index-tokens < 0 {
+		return fmt.Errorf("error: cannot unread %v tokens", tokens)
+	}
+	for i := 0; i < tokens; i++ {
+		tr.UnreadToken()
+	}
+	return nil
+}
+
+func (tr TokenReader) GetCurrentPosition() int {
+	return tr.index
+}

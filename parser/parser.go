@@ -25,6 +25,8 @@ func NewParser(src []tokenizer.Token, class *classfile.Class) Parser {
 }
 
 func (p *Parser) parseExpression() Expression {
+	prev, err := p.reader.ReadTokenAtOffset(-1)
+	isUnexpectedEndOfInput(err)
 	cur, err := p.reader.ReadToken()
 	isUnexpectedEndOfInput(err)
 	p.reader.NextToken()
@@ -32,17 +34,41 @@ func (p *Parser) parseExpression() Expression {
 	isUnexpectedEndOfInput(err)
 	if isStartOfMathExp(cur, next) {
 		p.reader.UnreadToken()
-		return NewMathmeticalParser(&p.reader).Parse()
+		return NewMathmaticalParser(p).Parse()
+	} else if isFunctionCallStart(cur, next, prev) {
+		return parseFunctionCallExp(p, cur, false)
 	} else if cur.Type == tokenizer.IDENTIFIER {
 		return Identifier{Value: cur}
 	}
 	return nil
 }
 
+func parseFunctionCallExp(p *Parser, cur tokenizer.Token, isInMathmeticalExp bool) Expression {
+	positionOfFuncName := p.reader.GetCurrentPosition() - 1
+	p.reader.NextToken()
+	functionName := cur.Value
+	args := make([]Expression, 0)
+	parseFuncCallArgs(p, &args)
+	p.reader.NextToken()
+	next, err := p.reader.ReadToken()
+	isUnexpectedEndOfInput(err)
+	if tokenizer.IsOperator(next) && !isInMathmeticalExp {
+		positionOfOp := p.reader.GetCurrentPosition()
+		p.reader.UnreadTokens(positionOfOp - positionOfFuncName)
+		mathExp := NewMathmaticalParser(p).Parse()
+		return mathExp
+	}
+	return FunctionCall{CalledFunctionName: functionName, Arguments: args}
+}
+
 func isStartOfMathExp(cur, next tokenizer.Token) bool {
 	return cur.Type == tokenizer.NUMBER || cur.Type == tokenizer.PLUS ||
 		cur.Type == tokenizer.MINUS || cur.Type == tokenizer.OPEN_PAR ||
 		(cur.Type == tokenizer.IDENTIFIER && tokenizer.IsOperator(next))
+}
+
+func isFunctionCallStart(cur, next, prev tokenizer.Token) bool {
+	return cur.Type == tokenizer.IDENTIFIER && next.Type == tokenizer.OPEN_PAR && prev.Type != tokenizer.FUN_DEF
 }
 
 func isSemicolon(t tokenizer.Token) {

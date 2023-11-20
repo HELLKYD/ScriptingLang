@@ -1,13 +1,16 @@
 fun main() int {
     let x int = 4*1;
     let y int = x;
-    x += y;
+    x += test2(1 + 1) + y;
     println(x);
     return x;
 }
 
-fun test(x int) {
-    x += 2;
-    x = 2*x;
+fun test(x int, y int, z int) int {
+    x += y;
+    return x + z;
+}
+
+fun test2(x int) int {
     return x;
 }
